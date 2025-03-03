@@ -1,4 +1,5 @@
 using Interpolations: linear_interpolation
+using Interpolations
 import .ContinuumAbsorption: total_continuum_absorption
 using .RadiativeTransfer
 
@@ -117,6 +118,7 @@ function synthesize(atm::ModelAtmosphere, linelist, A_X::AbstractVector{<:Real},
                     hydrogen_line_window_size=150, mu_values=20, line_cutoff_threshold=3e-4,
                     electron_number_density_warn_threshold=Inf,
                     electron_number_density_warn_min_value=1e-4, return_cntm=true,
+                    velocity_profile::Union{Bool, AbstractArray}=false,
                     I_scheme="linear_flux_only", tau_scheme="anchored",
                     ionization_energies=ionization_energies,
                     partition_funcs=default_partition_funcs,
@@ -140,7 +142,7 @@ function synthesize(atm::ModelAtmosphere, linelist, A_X::AbstractVector{<:Real},
         throw(ArgumentError("Requested wavelength range ($(wls)) " *
                             " extends blue-ward of 1300 Å, the lowerest allowed wavelength."))
     end
-
+    
     # work in cm
     cntm_step *= 1e-8
     line_buffer *= 1e-8
@@ -171,7 +173,7 @@ function synthesize(atm::ModelAtmosphere, linelist, A_X::AbstractVector{<:Real},
 
     abs_abundances = @. 10^(A_X - 12) # n(X) / n_tot
     abs_abundances ./= sum(abs_abundances) #normalize so that sum(n(X)/n_tot) = 1
-
+    
     #float-like type general to handle dual numbers
     α_type = promote_type(eltype(atm.layers).parameters..., eltype(linelist).parameters...,
                           eltype(wls), typeof(vmic), typeof.(abs_abundances)...)
@@ -226,7 +228,6 @@ function synthesize(atm::ModelAtmosphere, linelist, A_X::AbstractVector{<:Real},
                                               Korg.Wavelengths([5000]),
                                               get_temps(atm), vmic, number_densities)
     end
-
     source_fn = blackbody.((l -> l.temp).(atm.layers), wls')
     cntm = nothing
     if return_cntm
@@ -250,6 +251,16 @@ function synthesize(atm::ModelAtmosphere, linelist, A_X::AbstractVector{<:Real},
                      vmic * 1e5, α_cntm; cutoff_threshold=line_cutoff_threshold, verbose=verbose)
     interpolate_molecular_cross_sections!(α, molecular_cross_sections, wls, get_temps(atm), vmic,
                                           number_densities)
+    
+
+    # Shifting alpha according to velocity profile of each layers.
+
+    if velocity_profile isa AbstractArray
+        shifted_alpha = shifting_quantities(wls', velocity_profile, α)
+        α = shifted_alpha
+    end
+
+
 
     flux, intensity, μ_grid, μ_weights = RadiativeTransfer.radiative_transfer(atm, α, source_fn,
                                                                               mu_values; α_ref=α5,
@@ -334,3 +345,34 @@ function blackbody(T, λ)
 
     2 * h * c^2 / λ^5 * 1 / (exp(h * c / λ / k / T) - 1)
 end
+
+
+"""
+doppler_shift(wavelength, velocity)
+
+The doppler shifted wavelength for the given velocity.
+"""
+function doppler_shift(wavelength, velocity)
+    c = c_cgs / (100*1000)
+    lambda_obs = wavelength * ((velocity / c) + 1)
+    lambda_obs
+end
+
+
+"""
+shifting_quantities(wavelength, velocity, quantity)
+wavelength: wavelength array
+velocity: array of values of velocity
+quantity: Which quantity you want to shift.
+"""
+function shifting_quantities(wavelength::AbstractArray, velocity::AbstractArray, quantity::AbstractArray)
+    qty_new = zeros(size(quantity))
+    for i in eachindex(velocity)
+        observed_wl = doppler_shift(wavelength, velocity[i])
+        spline = linear_interpolation(vec(observed_wl), quantity[i,:], extrapolation_bc=Interpolations.Line())
+        shifted_alpha = spline.(wavelength)
+        qty_new[i,:] = shifted_alpha
+    end
+    qty_new
+end
+
