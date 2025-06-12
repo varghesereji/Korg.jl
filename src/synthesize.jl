@@ -1,5 +1,8 @@
 using Interpolations: linear_interpolation
-using Interpolations
+# using Interpolations
+# import Dierckx
+# using CubicSplines
+
 import .ContinuumAbsorption: total_continuum_absorption
 using .RadiativeTransfer
 
@@ -170,7 +173,7 @@ function synthesize(atm::ModelAtmosphere, linelist, A_X::AbstractVector{<:Real},
     if length(A_X) != MAX_ATOMIC_NUMBER || (A_X[1] != 12)
         throw(ArgumentError("A(H) must be a 92-element vector with A[1] == 12."))
     end
-
+    
     abs_abundances = @. 10^(A_X - 12) # n(X) / n_tot
     abs_abundances ./= sum(abs_abundances) #normalize so that sum(n(X)/n_tot) = 1
     
@@ -369,7 +372,7 @@ function shifting_quantities(wavelength::AbstractArray, velocity::AbstractArray,
     qty_new = zeros(size(quantity))
     for i in eachindex(velocity)
         observed_wl = doppler_shift(wavelength, velocity[i])
-        spline = linear_interpolation(vec(observed_wl), quantity[i,:], extrapolation_bc=Interpolations.Line())
+        spline = Korg.CubicSpline(vec(observed_wl), quantity[i,:], extrapolate=true)
         shifted_alpha = spline.(wavelength)
         qty_new[i,:] = shifted_alpha
     end
